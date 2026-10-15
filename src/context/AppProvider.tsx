@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, type ReactNode } from 'react';
 
 import { startAlarm, stopAlarm } from '@/services/alarm';
+import { clearEmergencyNotification } from '@/services/notifications';
 import * as storage from '@/services/storage';
 import type { AlertRecord } from '@/types';
 
@@ -45,6 +46,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const silenceEmergency = useCallback(() => {
     stopAlarm();
+    clearEmergencyNotification();
     const now = new Date();
     const record: AlertRecord = {
       id: `${now.getTime()}`,

@@ -12,7 +12,8 @@
       "infoPlist": {
         "NSBluetoothAlwaysUsageDescription": "ElderCare usa Bluetooth para vincular la pulsera.",
         "NSBluetoothPeripheralUsageDescription": "ElderCare usa Bluetooth para vincular la pulsera."
-      }
+      },
+      "bundleIdentifier": "com.eldercare.app"
     },
     "android": {
       "adaptiveIcon": {
@@ -32,9 +33,12 @@
         "SYSTEM_ALERT_WINDOW",
         "USE_FULL_SCREEN_INTENT",
         "POST_NOTIFICATIONS"
-      ]
+      ],
+      "package": "com.eldercare.app",
+      "googleServicesFile": "./google-services.json"
     },
     "plugins": [
+      "@react-native-firebase/app",
       [
         "expo-splash-screen",
         {

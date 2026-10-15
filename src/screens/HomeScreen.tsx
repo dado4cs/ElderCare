@@ -1,12 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { StackScreenProps } from '@react-navigation/stack';
-import { StyleSheet, Text, View } from 'react-native';
+import { Share, StyleSheet, Text, View } from 'react-native';
 
 import { BatteryWidget } from '@/components/BatteryWidget';
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Radius } from '@/constants/theme';
 import { useApp } from '@/context/AppContext';
+import { getFcmToken } from '@/services/fcm';
 import { useTheme } from '@/hooks/useTheme';
 import type { RootStackParamList } from '@/types';
 
@@ -52,6 +53,11 @@ export function HomeScreen({ navigation }: StackScreenProps<RootStackParamList, 
         <View style={[styles.dev, { borderColor: c.border }]}>
           <Text style={[styles.devTitle, { color: c.textSecondary }]}>DESARROLLO</Text>
           <Button title="Simular alerta" variant="secondary" onPress={triggerEmergency} />
+          <Button
+            title="Compartir token FCM"
+            variant="secondary"
+            onPress={async () => Share.share({ message: await getFcmToken() })}
+          />
           <Button title="Desvincular pulsera" variant="secondary" onPress={unlinkBracelet} />
         </View>
       )}
