@@ -8,7 +8,11 @@
     "scheme": "eldercare",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "ElderCare usa Bluetooth para vincular la pulsera.",
+        "NSBluetoothPeripheralUsageDescription": "ElderCare usa Bluetooth para vincular la pulsera."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -17,14 +21,20 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
-    },
-    "web": {
-      "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "ACCESS_FINE_LOCATION",
+        "RECEIVE_BOOT_COMPLETED",
+        "SYSTEM_ALERT_WINDOW",
+        "USE_FULL_SCREEN_INTENT",
+        "POST_NOTIFICATIONS"
+      ]
     },
     "plugins": [
-      "expo-router",
       [
         "expo-splash-screen",
         {
@@ -34,8 +44,11 @@
         }
       ]
     ],
+    "platforms": [
+      "android",
+      "ios"
+    ],
     "experiments": {
-      "typedRoutes": true,
       "reactCompiler": true
     }
   }
