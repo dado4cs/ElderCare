@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { PermissionsAndroid, Platform } from 'react-native';
 import {
   BleManager,
@@ -32,10 +32,6 @@ import type { WifiNetwork } from '@/types';
  *           { "ssid": "Infinitum_Fibra", "signal": 3, "secured": true },
  *           { "ssid": "Red_Abierta", "signal": 2, "secured": false }
  *         ]
- *         Donde:
- *           - ssid: Nombre de la red (string).
- *           - signal: Nivel de potencia mapeado del RSSI entre 1 y 4 (number).
- *           - secured: true si tiene clave (WPA/WPA2/WPA3), false si es abierta (boolean).
  *
  *    B) Envío de Credenciales (Credentials)
  *       - UUID: a3c10001-2000-4000-8000-111122223333
@@ -52,18 +48,21 @@ import type { WifiNetwork } from '@/types';
  *           { "status": "OK", "id": "ECB-A89F2" }
  *         - En caso de contraseña incorrecta o error de conexión:
  *           { "status": "ERROR" }
- *
- * 4. NEGOCIACIÓN DE MTU:
- *    - En Android se solicita un MTU de 512 bytes para transferir la lista JSON completa
- *      sin necesidad de fragmentar paquetes BLE.
  * ========================================================================================= */
 
 /**
- * Bandera para alternar entre el mock de desarrollo y la conexión BLE real con el ESP32.
- * - true:  Utiliza datos simulados (útil en Expo Go o para desarrollo sin el ESP32).
- * - false: Utiliza react-native-ble-plx conectándose a la pulsera física.
+ * Bandera por defecto para alternar entre el mock de desarrollo y la conexión BLE real.
  */
-export const USE_BLE_MOCK = true;
+export const DEFAULT_USE_MOCK = true;
+
+export type BleLogLevel = 'info' | 'success' | 'warn' | 'error';
+
+export type BleLogEntry = {
+  id: string;
+  time: string;
+  level: BleLogLevel;
+  message: string;
+};
 
 // =====================================
 // CONFIGURACIÓN Y CONSTANTES BLE
@@ -154,9 +153,6 @@ function getBleManager(): BleManager | null {
     try {
       bleManagerInstance = new BleManager();
     } catch {
-      console.warn(
-        '[BLE] BleManager no disponible en este entorno (se requiere Development Build).'
-      );
       return null;
     }
   }
@@ -202,39 +198,79 @@ async function ensureBluetoothPoweredOn(manager: BleManager): Promise<void> {
 // =====================================
 export function useBLE() {
   const currentDeviceRef = useRef<Device | null>(null);
+  const [isMock, setIsMock] = useState<boolean>(DEFAULT_USE_MOCK);
+  const [logs, setLogs] = useState<BleLogEntry[]>([]);
+
+  const addLog = useCallback((message: string, level: BleLogLevel = 'info') => {
+    const now = new Date();
+    const time = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0');
+    const entry: BleLogEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      time,
+      level,
+      message,
+    };
+    setLogs((prev) => [...prev.slice(-49), entry]); // Conserva los últimos 50 logs
+    if (level === 'error') {
+      console.error(`[BLE ${time}]`, message);
+    } else if (level === 'warn') {
+      console.warn(`[BLE ${time}]`, message);
+    } else {
+      console.log(`[BLE ${time}]`, message);
+    }
+  }, []);
+
+  const clearLogs = useCallback(() => {
+    setLogs([]);
+  }, []);
 
   /**
    * 1. Conecta con el ESP32 y solicita la lista de redes WiFi escaneadas.
    */
   const scanNetworks = useCallback(async (): Promise<WifiNetwork[]> => {
-    // Si estamos en modo Mock:
-    if (USE_BLE_MOCK) {
+    addLog(`Iniciando escaneo (Modo: ${isMock ? 'SIMULADO / MOCK' : 'REAL / HARDWARE'})...`, 'info');
+
+    // MODO MOCK
+    if (isMock) {
+      addLog('[MOCK] Esperando respuesta simulada (1.8s)...', 'info');
       await delay(1800);
+      addLog(`[MOCK] Redes simuladas cargadas (${MOCK_NETWORKS.length} encontradas).`, 'success');
       return MOCK_NETWORKS;
     }
 
-    // Modo Real:
+    // MODO REAL
     const manager = getBleManager();
     if (!manager) {
-      console.warn('[useBLE] BleManager no disponible. Usando datos simulados.');
-      await delay(1800);
+      addLog(
+        '[ALERTA] BleManager no disponible (probablemente estás en Expo Go). Cambiando automáticamente a MOCK.',
+        'warn'
+      );
+      await delay(1500);
       return MOCK_NETWORKS;
     }
 
+    addLog('Comprobando permisos Bluetooth / Ubicación...', 'info');
     const hasPermissions = await requestBlePermissions();
     if (!hasPermissions) {
-      throw new Error('Se requieren permisos de Bluetooth para vincular la pulsera.');
+      const err = 'Permisos de Bluetooth o ubicación denegados.';
+      addLog(err, 'error');
+      throw new Error(err);
     }
+    addLog('Permisos validados correctamente.', 'success');
 
+    addLog('Verificando estado del Bluetooth...', 'info');
     await ensureBluetoothPoweredOn(manager);
+    addLog('Bluetooth activo y listo.', 'success');
 
-    // A) Escanear hasta encontrar la pulsera
+    // A) Escaneo BLE
+    addLog(`Buscando periférico "${BLE_CONFIG.DEVICE_NAME}" [UUID: ${BLE_CONFIG.SERVICE_UUID.slice(0, 8)}...]`, 'info');
     const device = await new Promise<Device>((resolve, reject) => {
       let timeoutId: ReturnType<typeof setTimeout>;
 
       const stopAndReject = (err: Error) => {
         clearTimeout(timeoutId);
         manager.stopDeviceScan();
+        addLog(`Fallo en escaneo: ${err.message}`, 'error');
         reject(err);
       };
 
@@ -256,59 +292,79 @@ export function useBLE() {
         ) {
           clearTimeout(timeoutId);
           manager.stopDeviceScan();
+          addLog(`¡Pulsera detectada! Nombre: "${dev.name || 'N/A'}" ID: ${dev.id}`, 'success');
           resolve(dev);
         }
       });
     });
 
-    // B) Conectar y descubrir servicios
+    // B) Conexión y descubrimiento
+    addLog(`Conectando con ${device.id}...`, 'info');
     let connected = await device.connect({ timeout: BLE_CONFIG.CONNECTION_TIMEOUT_MS });
+    addLog('Conexión BLE establecida. Descubriendo servicios GATT...', 'info');
     connected = await connected.discoverAllServicesAndCharacteristics();
+    addLog('Servicios y características descubiertos con éxito.', 'success');
 
-    // C) Negociar MTU a 512 bytes (Android)
+    // C) Negociación de MTU (Android)
     if (Platform.OS === 'android') {
       try {
+        addLog('Negociando MTU a 512 bytes...', 'info');
         connected = await connected.requestMTU(512);
+        addLog('MTU negociado correctamente a 512 bytes.', 'success');
       } catch {
-        // Fallback al MTU base si la placa no lo renegocia
+        addLog('No se pudo renegociar MTU, continuando con tamaño por defecto.', 'warn');
       }
     }
 
     currentDeviceRef.current = connected;
 
-    // D) Leer característica de redes escaneadas
+    // D) Lectura de redes
+    addLog('Leyendo característica de redes WiFi (CHAR_SCAN)...', 'info');
     const char = await connected.readCharacteristicForService(
       BLE_CONFIG.SERVICE_UUID,
       BLE_CONFIG.CHAR_SCAN_UUID
     );
 
     if (!char.value) {
-      throw new Error('La pulsera no reportó ninguna red WiFi disponible.');
+      const err = 'La pulsera no reportó ninguna red WiFi disponible.';
+      addLog(err, 'error');
+      throw new Error(err);
     }
 
     const jsonText = decodeBase64(char.value);
+    addLog(`Datos recibidos del ESP32: ${jsonText.slice(0, 60)}...`, 'info');
     const parsedNetworks: WifiNetwork[] = JSON.parse(jsonText);
+    addLog(`Lectura completada: ${parsedNetworks.length} redes detectadas.`, 'success');
     return parsedNetworks;
-  }, []);
+  }, [isMock, addLog]);
 
   /**
    * 2. Envía las credenciales seleccionadas al ESP32 y espera confirmación de conexión.
    */
   const provision = useCallback(
     async (ssid: string, password: string, secured: boolean): Promise<string> => {
-      // Si estamos en modo Mock:
-      if (USE_BLE_MOCK) {
+      addLog(`Iniciando envío de credenciales para "${ssid}"...`, 'info');
+
+      // MODO MOCK
+      if (isMock) {
+        addLog('[MOCK] Esperando tiempo de conexión simulado (2.2s)...', 'info');
         await delay(2200);
         if (secured && password.length < 8) {
-          throw new Error(`No se pudo conectar a "${ssid}". Revisa la contraseña e intenta de nuevo.`);
+          const err = `No se pudo conectar a "${ssid}". Revisa la contraseña e intenta de nuevo.`;
+          addLog(`[MOCK] Error simulado: ${err}`, 'error');
+          throw new Error(err);
         }
-        return `ECB-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+        const mockId = `ECB-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+        addLog(`[MOCK] Conexión simulada exitosa. ID asignado: ${mockId}`, 'success');
+        return mockId;
       }
 
-      // Modo Real:
+      // MODO REAL
       const device = currentDeviceRef.current;
       if (!device) {
-        throw new Error('No hay una conexión activa con la pulsera. Vuelve a iniciar el escaneo.');
+        const err = 'No hay una conexión activa con la pulsera. Vuelve a iniciar el escaneo.';
+        addLog(err, 'error');
+        throw new Error(err);
       }
 
       const payload = `${ssid};${password}`;
@@ -327,14 +383,12 @@ export function useBLE() {
           cleanup();
           device.cancelConnection().catch(() => {});
           currentDeviceRef.current = null;
-          reject(
-            new Error(
-              `Tiempo de espera agotado al conectar a "${ssid}". Verifica la contraseña e intenta de nuevo.`
-            )
-          );
+          const timeoutErr = `Tiempo de espera agotado al conectar a "${ssid}". Verifica la contraseña.`;
+          addLog(timeoutErr, 'error');
+          reject(new Error(timeoutErr));
         }, BLE_CONFIG.PROVISION_TIMEOUT_MS);
 
-        // Suscribirse a la notificación de estado
+        addLog('Suscribiéndose a notificaciones de estado (CHAR_STATUS)...', 'info');
         subscription = device.monitorCharacteristicForService(
           BLE_CONFIG.SERVICE_UUID,
           BLE_CONFIG.CHAR_STATUS_UUID,
@@ -343,6 +397,7 @@ export function useBLE() {
               cleanup();
               device.cancelConnection().catch(() => {});
               currentDeviceRef.current = null;
+              addLog(`Error en notificación: ${err.message}`, 'error');
               reject(err);
               return;
             }
@@ -350,47 +405,59 @@ export function useBLE() {
             if (char?.value) {
               try {
                 const raw = decodeBase64(char.value);
+                addLog(`Notificación recibida del ESP32: ${raw}`, 'info');
                 const data = JSON.parse(raw) as { status: 'OK' | 'ERROR'; id?: string };
 
                 if (data.status === 'OK' && data.id) {
                   cleanup();
                   device.cancelConnection().catch(() => {});
                   currentDeviceRef.current = null;
+                  addLog(`¡Pulsera vinculada con éxito! ID asignado: ${data.id}`, 'success');
                   resolve(data.id);
                 } else if (data.status === 'ERROR') {
                   cleanup();
                   device.cancelConnection().catch(() => {});
                   currentDeviceRef.current = null;
-                  reject(
-                    new Error(
-                      `No se pudo conectar a "${ssid}". Revisa la contraseña e intenta de nuevo.`
-                    )
-                  );
+                  const errorMsg = `La pulsera reportó error al conectar a "${ssid}".`;
+                  addLog(errorMsg, 'error');
+                  reject(new Error(errorMsg));
                 }
               } catch {
-                // Ignorar fragmentos no parseables
+                // Fragmento no JSON, ignorar
               }
             }
           }
         );
 
-        // Escribir las credenciales en la característica
+        addLog(`Escribiendo credenciales en CHAR_CREDENTIALS ("${ssid};***")...`, 'info');
         device
           .writeCharacteristicWithResponseForService(
             BLE_CONFIG.SERVICE_UUID,
             BLE_CONFIG.CHAR_CREDENTIALS_UUID,
             base64Payload
           )
+          .then(() => {
+            addLog('Credenciales enviadas al ESP32. Esperando que intente conectarse al router...', 'info');
+          })
           .catch((err) => {
             cleanup();
             device.cancelConnection().catch(() => {});
             currentDeviceRef.current = null;
+            addLog(`Fallo al escribir credenciales: ${err.message}`, 'error');
             reject(new Error(`Error al enviar las credenciales: ${err.message}`));
           });
       });
     },
-    []
+    [isMock, addLog]
   );
 
-  return { scanNetworks, provision, isMock: USE_BLE_MOCK };
+  return {
+    scanNetworks,
+    provision,
+    isMock,
+    setIsMock,
+    logs,
+    clearLogs,
+    addLog,
+  };
 }

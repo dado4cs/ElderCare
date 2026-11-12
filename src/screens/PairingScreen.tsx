@@ -26,21 +26,27 @@ type Phase = 'scanning' | 'select' | 'password' | 'connecting';
 export function PairingScreen({ navigation }: StackScreenProps<RootStackParamList, 'Pairing'>) {
   const c = useTheme();
   const { linkBracelet } = useApp();
-  const { scanNetworks, provision } = useBLE();
+  const { scanNetworks, provision, isMock, setIsMock, logs, clearLogs } = useBLE();
 
   const [phase, setPhase] = useState<Phase>('scanning');
   const [networks, setNetworks] = useState<WifiNetwork[]>([]);
   const [selected, setSelected] = useState<WifiNetwork | null>(null);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [showLogs, setShowLogs] = useState(false);
 
   const scan = useCallback(async () => {
     setPhase('scanning');
+    setError(null);
     try {
       setNetworks(await scanNetworks());
       setPhase('select');
-    } catch {
-      setError('No se pudo comunicar con la pulsera. Verifica el Bluetooth.');
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : 'No se pudo comunicar con la pulsera. Verifica el Bluetooth.'
+      );
       setPhase('select');
     }
   }, [scanNetworks]);
@@ -63,24 +69,47 @@ export function PairingScreen({ navigation }: StackScreenProps<RootStackParamLis
     setPhase('connecting');
     try {
       const id = await provision(network.ssid, pass, network.secured);
-      // Guardar el ID hace que el navegador cambie solo a la Pantalla Principal.
       await linkBracelet(id);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ocurrió un error inesperado.');
-      setPhase('select'); // vuelve al paso 2 (lista de redes) según CU-01
+      setPhase('select');
     }
   };
 
   return (
     <Screen>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => navigation.goBack()}
-        style={styles.back}
-        hitSlop={12}>
-        <Ionicons name="chevron-back" size={20} color={c.primary} />
-        <Text style={[styles.backText, { color: c.primary }]}>Volver</Text>
-      </Pressable>
+      <View style={styles.topBar}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => navigation.goBack()}
+          style={styles.back}
+          hitSlop={12}>
+          <Ionicons name="chevron-back" size={20} color={c.primary} />
+          <Text style={[styles.backText, { color: c.primary }]}>Volver</Text>
+        </Pressable>
+
+        {/* Botón para alternar la consola de logs y modo DEV */}
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setShowLogs((prev) => !prev)}
+          style={[
+            styles.devBadge,
+            { backgroundColor: isMock ? '#F1F5F9' : '#DCFCE7' },
+          ]}>
+          <Ionicons
+            name="terminal-outline"
+            size={14}
+            color={isMock ? '#475569' : '#166534'}
+          />
+          <Text
+            style={[
+              styles.devBadgeText,
+              { color: isMock ? '#475569' : '#166534' },
+            ]}>
+            {isMock ? 'MOCK' : 'REAL'} ({logs.length})
+          </Text>
+        </Pressable>
+      </View>
 
       <Text style={[styles.title, { color: c.text }]}>Vincular pulsera</Text>
       <Text style={[styles.subtitle, { color: c.textSecondary }]}>
@@ -88,6 +117,59 @@ export function PairingScreen({ navigation }: StackScreenProps<RootStackParamLis
           ? `Ingresa la contraseña de "${selected?.ssid}".`
           : 'Elige la red WiFi de tu hogar para conectar la pulsera a internet.'}
       </Text>
+
+      {/* Consola de logs en vivo para depuración de hardware */}
+      {showLogs && (
+        <View style={styles.logPanel}>
+          <View style={styles.logHeader}>
+            <Text style={styles.logTitle}>Consola BLE (Depuración)</Text>
+            <View style={styles.logActions}>
+              <Pressable
+                onPress={() => {
+                  setIsMock(!isMock);
+                  setTimeout(scan, 100);
+                }}
+                style={[
+                  styles.miniBtn,
+                  { backgroundColor: isMock ? '#2563EB' : '#16A34A' },
+                ]}>
+                <Text style={styles.miniBtnText}>
+                  Cambiar a {isMock ? 'REAL' : 'MOCK'}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={clearLogs}
+                style={[styles.miniBtn, { backgroundColor: '#475569' }]}>
+                <Text style={styles.miniBtnText}>Limpiar</Text>
+              </Pressable>
+            </View>
+          </View>
+          <ScrollView
+            style={styles.logScroll}
+            nestedScrollEnabled
+            contentContainerStyle={{ padding: 10 }}>
+            {logs.length === 0 ? (
+              <Text style={styles.logEmpty}>No hay eventos registrados aún.</Text>
+            ) : (
+              logs.map((log) => (
+                <View key={log.id} style={styles.logRow}>
+                  <Text style={styles.logTime}>{log.time}</Text>
+                  <Text
+                    style={[
+                      styles.logText,
+                      log.level === 'error' && { color: '#F87171' },
+                      log.level === 'success' && { color: '#4ADE80' },
+                      log.level === 'warn' && { color: '#FBBF24' },
+                      log.level === 'info' && { color: '#CBD5E1' },
+                    ]}>
+                    {log.message}
+                  </Text>
+                </View>
+              ))
+            )}
+          </ScrollView>
+        </View>
+      )}
 
       {error && (
         <View style={[styles.error, { backgroundColor: c.dangerSoft }]}>
@@ -100,7 +182,9 @@ export function PairingScreen({ navigation }: StackScreenProps<RootStackParamLis
         <View style={styles.center}>
           <ActivityIndicator size="large" color={c.primary} />
           <Text style={[styles.status, { color: c.textSecondary }]}>
-            {phase === 'scanning' ? 'Buscando redes WiFi…' : `Conectando a "${selected?.ssid}"…`}
+            {phase === 'scanning'
+              ? 'Buscando redes WiFi…'
+              : `Conectando a "${selected?.ssid}"…`}
           </Text>
         </View>
       )}
@@ -114,10 +198,24 @@ export function PairingScreen({ navigation }: StackScreenProps<RootStackParamLis
                 accessibilityRole="button"
                 accessibilityLabel={`Red ${n.ssid}`}
                 onPress={() => choose(n)}
-                style={[styles.network, { backgroundColor: c.surface, borderColor: c.border }]}>
-                <Ionicons name="wifi" size={22} color={c.primary} style={{ opacity: 0.4 + n.signal * 0.15 }} />
+                style={[
+                  styles.network,
+                  { backgroundColor: c.surface, borderColor: c.border },
+                ]}>
+                <Ionicons
+                  name="wifi"
+                  size={22}
+                  color={c.primary}
+                  style={{ opacity: 0.4 + n.signal * 0.15 }}
+                />
                 <Text style={[styles.ssid, { color: c.text }]}>{n.ssid}</Text>
-                {n.secured && <Ionicons name="lock-closed" size={16} color={c.textSecondary} />}
+                {n.secured && (
+                  <Ionicons
+                    name="lock-closed"
+                    size={16}
+                    color={c.textSecondary}
+                  />
+                )}
               </Pressable>
             ))}
             <Button title="Buscar de nuevo" variant="secondary" onPress={scan} />
@@ -138,7 +236,14 @@ export function PairingScreen({ navigation }: StackScreenProps<RootStackParamLis
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus
-            style={[styles.input, { backgroundColor: c.surface, borderColor: c.border, color: c.text }]}
+            style={[
+              styles.input,
+              {
+                backgroundColor: c.surface,
+                borderColor: c.border,
+                color: c.text,
+              },
+            ]}
           />
           <Text style={[styles.hint, { color: c.textSecondary }]}>
             Modo prueba: una contraseña de menos de 8 caracteres simula un error de conexión.
@@ -163,10 +268,25 @@ export function PairingScreen({ navigation }: StackScreenProps<RootStackParamLis
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  back: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, alignSelf: 'flex-start' },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  back: { flexDirection: 'row', alignItems: 'center' },
   backText: { fontSize: 16, fontWeight: '500' },
+  devBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: Radius.pill,
+  },
+  devBadgeText: { fontSize: 12, fontWeight: '700' },
   title: { fontSize: 30, fontWeight: '700' },
-  subtitle: { fontSize: 16, lineHeight: 22, marginTop: 6, marginBottom: 20 },
+  subtitle: { fontSize: 16, lineHeight: 22, marginTop: 6, marginBottom: 16 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16 },
   status: { fontSize: 16 },
   list: { gap: 10, paddingBottom: 16 },
@@ -179,7 +299,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   ssid: { flex: 1, fontSize: 17, fontWeight: '500' },
-  error: { flexDirection: 'row', gap: 8, padding: 12, borderRadius: Radius.md, marginBottom: 14 },
+  error: {
+    flexDirection: 'row',
+    gap: 8,
+    padding: 12,
+    borderRadius: Radius.md,
+    marginBottom: 14,
+  },
   errorText: { flex: 1, fontSize: 14, lineHeight: 20 },
   input: {
     height: 52,
@@ -189,4 +315,41 @@ const styles = StyleSheet.create({
     fontSize: 17,
   },
   hint: { fontSize: 13, marginTop: 10 },
+  logPanel: {
+    backgroundColor: '#0F172A',
+    borderRadius: Radius.md,
+    marginBottom: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  logHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#1E293B',
+  },
+  logTitle: { color: '#F8FAFC', fontSize: 12, fontWeight: '700' },
+  logActions: { flexDirection: 'row', gap: 8 },
+  miniBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 4,
+  },
+  miniBtnText: { color: '#FFFFFF', fontSize: 11, fontWeight: '600' },
+  logScroll: { maxHeight: 150 },
+  logEmpty: { color: '#64748B', fontSize: 12, fontStyle: 'italic' },
+  logRow: { flexDirection: 'row', gap: 6, marginBottom: 3 },
+  logTime: {
+    color: '#64748B',
+    fontSize: 11,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  logText: {
+    flex: 1,
+    fontSize: 11,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
 });
