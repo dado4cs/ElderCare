@@ -45,3 +45,5 @@ example
 service-account.json
 *-adminsdk-*.json
 google-services.json
+GoogleService-Info.plist
+arduino_secrets.h
